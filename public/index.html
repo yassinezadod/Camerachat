@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video Chat</title>
+</head>
+<body>
+
+<button onclick="openCamera()">Open Camera</button>
+<video id="localVideo" width="320" height="240" autoplay muted style="display: none;"></video>
+<div id="remoteVideos"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/socket.io/client-dist/socket.io.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/simple-peer@16.2.1/simplepeer.min.js"></script>
+<script>
+  const socket = io();
+  const localVideo = document.getElementById('localVideo');
+  const remoteVideosContainer = document.getElementById('remoteVideos');
+  let peer;
+
+  async function openCamera() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localVideo.srcObject = stream;
+      localVideo.style.display = 'block';
+      initPeerConnection(stream);
+    } catch (error) {
+      console.log('Error accessing camera:', error);
+    }
+  }
+
+  function initPeerConnection(stream) {
+    peer = new SimplePeer({ initiator: true, stream, trickle: false });
+
+    // When local peer has a signal, send it to the remote peer
+    peer.on('signal', (data) => {
+      socket.emit('signal', true, socket.id, data);
+    });
+
+    // When a new remote peer signal is received, signal back
+    socket.on('signal', (initiator, id, data) => {
+      if (!initiator && id !== socket.id) {
+        // If the other user is not the initiator, create a new SimplePeer instance
+        const newPeer = new SimplePeer({ stream, trickle: false });
+        // Connect the peers
+        newPeer.signal(data);
+        // Emit the signal back to the initiator
+        socket.emit('signal', false, newPeer._id, newPeer.signal());
+      }
+    });
+
+    // When the connection is established, add the remote video to the page
+    peer.on('stream', (remoteStream) => {
+      const remoteVideo = document.createElement('video');
+      remoteVideo.srcObject = remoteStream;
+      remoteVideo.setAttribute('autoplay', true);
+      remoteVideosContainer.appendChild(remoteVideo);
+    });
+
+    // Handle errors
+    peer.on('error', (err) => {
+      console.log('Peer connection error:', err);
+    });
+
+    // Handle peer disconnection
+    peer.on('close', () => {
+      console.log('Peer connection closed');
+      cleanupPeerConnection();
+    });
+  }
+
+  function cleanupPeerConnection() {
+    if (peer) {
+      peer.destroy();
+      peer = null;
+    }
+    localVideo.style.display = 'none';
+    remoteVideosContainer.innerHTML = '';
+  }
+
+  // Handle window unload to disconnect the peer
+  window.addEventListener('beforeunload', () => {
+    cleanupPeerConnection();
+    socket.disconnect();
+  });
+</script>
+
+</body>
+</html>
